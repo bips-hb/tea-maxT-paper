@@ -3,6 +3,8 @@
 Code and simulation materials accompanying the manuscript by
 G. Corradini, M. N. Wright, R. Foraita and L. Finos.
 
+Manuscript: [arXiv:2611.09231](https://arxiv.org/abs/2611.09231)
+
 ## Contents
 
 | Folder | Contents |
