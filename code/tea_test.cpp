@@ -1,7 +1,7 @@
 // [[Rcpp::plugins(cpp17)]]
 // [[Rcpp::depends(BH)]]
 
-// Closed permutation tests for binary endpoints.
+// Closed permutation tests using binary or Wilcoxon rank-sum statistics.
 #include <Rcpp.h>
 #include <boost/multi_array.hpp>
 #include <boost/numeric/ublas/triangular.hpp>
@@ -100,17 +100,34 @@ public:
     }
 };
 
-// Pooled standardized differences in proportions. Endpoint totals remain
-// fixed under permutation, so all attainable statistics can be computed first.
+// Endpoint totals and pooled ranks remain fixed under permutation.
 class Scores {
     int m;
+    int alternative;
+    std::vector<std::vector<int>> ranks;
     std::vector<int> lower;
     std::vector<std::vector<int>> events;
     std::vector<std::vector<Key>> lookup;
 public:
-    Scores(const Rcpp::NumericMatrix& x, int n1, int alternative) :
-        m(x.ncol()), lower(m), events(m), lookup(m) {
+    Scores(const Rcpp::NumericMatrix& x, int n1, int alternative, bool wilcoxon) :
+        m(x.ncol()), alternative(alternative), lower(m), events(m), lookup(m) {
         const int n = x.nrow(), n0 = n - n1;
+        if (wilcoxon) {
+            ranks.assign(n, std::vector<int>(m));
+            Rcpp::Function rank = Rcpp::Environment::base_env()["rank"];
+            for (int j = 0; j < m; ++j) {
+                if (j % 128 == 0) Rcpp::checkUserInterrupt();
+                Rcpp::NumericVector column = x(Rcpp::_, j);
+                if (Rcpp::is_true(Rcpp::any(!Rcpp::is_finite(column))))
+                    Rcpp::stop("Wilcoxon scores require finite observations.");
+                Rcpp::NumericVector midranks = rank(column);
+                for (int i = 0; i < n; ++i) {
+                    const int centered = static_cast<int>(2 * midranks[i] - (n + 1.0));
+                    ranks[i][j] = alternative == 1 ? -centered : centered;
+                }
+            }
+            return;
+        }
         for (int j = 0; j < m; ++j) {
             if (j % 128 == 0) Rcpp::checkUserInterrupt();
             for (int i = 0; i < n; ++i) {
@@ -138,6 +155,15 @@ public:
     }
 
     void evaluate(const std::vector<int>& labels, std::vector<Key>& values) const {
+        if (!ranks.empty()) {
+            std::fill(values.begin(), values.end(), 0);
+            for (std::size_t i = 0; i < labels.size(); ++i)
+                if (labels[i])
+                    for (int j = 0; j < m; ++j) values[j] += ranks[i][j];
+            if (alternative == 2)
+                for (Key& value : values) value = std::abs(value);
+            return;
+        }
         for (int j = 0; j < m; ++j) {
             const int successes = std::accumulate(events[j].begin(), events[j].end(), 0,
                 [&](int sum, int subject) { return sum + labels[subject]; });
@@ -166,10 +192,11 @@ struct Capture {
     Capture(bool save, int rows, int n, int m) : keep(save),
         assignments(save ? rows : 0, save ? n : 0),
         statistics(save ? rows : 0, save ? m : 0) {}
-    void add(int row, const std::vector<int>& labels, const std::vector<Key>& values) {
+    void add(int row, const std::vector<int>& labels, const std::vector<Key>& values,
+             double score_scale) {
         if (!keep) return;
         for (std::size_t i = 0; i < labels.size(); ++i) assignments(row, i) = labels[i];
-        for (std::size_t j = 0; j < values.size(); ++j) statistics(row, j) = values[j] / scale;
+        for (std::size_t j = 0; j < values.size(); ++j) statistics(row, j) = values[j] / score_scale;
     }
     void append(Rcpp::List& result) const {
         if (!keep) return;
@@ -191,6 +218,7 @@ inline std::vector<int> ranking(const std::vector<Key>& values) {
 class PermutationProblem {
     Permutations permutations;
     Scores scores;
+    double score_scale;
 public:
     int m, total;
     std::vector<Key> observed, current;
@@ -198,9 +226,10 @@ public:
     Capture capture;
 
     PermutationProblem(const Rcpp::NumericMatrix& x, const Rcpp::IntegerVector& group,
-                       int n_perm, bool exact, int perm_seed, int alternative, bool keep) :
+                       int n_perm, bool exact, int perm_seed, int alternative, bool keep, bool wilcoxon) :
         permutations(group, n_perm, exact, perm_seed),
-        scores(x, Rcpp::sum(group), alternative), m(x.ncol()), total(permutations.total),
+        scores(x, Rcpp::sum(group), alternative, wilcoxon), score_scale(wilcoxon ? 2.0 : scale),
+        m(x.ncol()), total(permutations.total),
         observed(m), current(m), capture(keep, total, x.nrow(), m) {
         scores.evaluate(permutations.labels, observed);
         order = ranking(observed);
@@ -212,7 +241,7 @@ public:
             if (row % 32 == 0) Rcpp::checkUserInterrupt();
             permutations.next(row);
             scores.evaluate(permutations.labels, current);
-            capture.add(row, permutations.labels, current);
+            capture.add(row, permutations.labels, current, score_scale);
             function(row, current);
         }
     }
@@ -220,7 +249,7 @@ public:
     Rcpp::List finish(Rcpp::List result) const {
         Rcpp::NumericVector statistic(m);
         std::transform(observed.begin(), observed.end(), statistic.begin(),
-            [](Key value) { return value / scale; });
+            [this](Key value) { return value / score_scale; });
         result["statistic"] = statistic;
         result["n_assignments"] = total;
         capture.append(result);
@@ -662,9 +691,9 @@ Rcpp::List run_kea(PermutationProblem& problem, int k, double alpha) {
 Rcpp::List tea_test_cpp(Rcpp::NumericMatrix x, Rcpp::IntegerVector group,
                        int n_perm, bool exact, int perm_seed, int u_seed,
                        int alternative, bool keep_permutations,
-                       std::string method, int k, double alpha) {
+                       std::string method, int k, double alpha, bool wilcoxon = false) {
     tea_detail::PermutationProblem problem(x, group, n_perm, exact, perm_seed,
-                                          alternative, keep_permutations);
+                                          alternative, keep_permutations, wilcoxon);
     if (method == "classic")
         return tea_detail::run_maxT(problem, 1.0, false, alpha);
     if (method == "shared_u") {
