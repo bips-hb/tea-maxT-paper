@@ -1,4 +1,4 @@
-# Closed permutation tests for binary endpoints.
+# Closed permutation tests using binary or Wilcoxon rank-sum statistics.
 # Rows are subjects, columns are endpoints; group 0 is the reference.
 # Validity requires joint permutation invariance under each intersection null.
 tea_test <- local({
@@ -73,10 +73,12 @@ tea_test <- local({
              alternative = c("greater", "less", "two.sided"),
              perm_seed = NULL, exact = FALSE, keep_permutations = FALSE,
              method = c("tea", "classic", "shared_u", "kea"),
-             k = 2L, u_seed = NULL, alpha = NULL) {
+             k = 2L, u_seed = NULL, alpha = NULL,
+             statistic = c("binary", "wilcoxon")) {
         # Use one prespecified augmentation order for all intersections.
         alternative <- match.arg(alternative)
         method <- match.arg(method)
+        statistic <- match.arg(statistic)
         input <- .inputs(x, group, n_perm, exact, keep_permutations)
         if (method != "kea" && !missing(k))
             stop("Supply 'k' only with method = 'kea'.", call. = FALSE)
@@ -105,7 +107,8 @@ tea_test <- local({
             if (exact) 0L else perm_seed,
             if (method == "shared_u") u_seed else 0L,
             match(alternative, c("greater", "less", "two.sided")) - 1L,
-            keep_permutations, method, k, if (is.null(alpha)) -1 else alpha)
+            keep_permutations, method, k, if (is.null(alpha)) -1 else alpha,
+            statistic == "wilcoxon")
 
         result <- .finish(result, x, input$group, alternative, exact, perm_seed)
         result$method <- method
