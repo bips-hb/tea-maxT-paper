@@ -8,9 +8,10 @@ G. Corradini, M. N. Wright, R. Foraita and L. Finos.
 | Folder | Contents |
 | --- | --- |
 | `code/` | The `tea_test()` R wrapper and its C++ implementation |
-| `simulations/` | Main simulation study: independent endpoints |
-| `simulations_2/` | Correlated endpoints (Supplement S5.4) |
-| `simulations_k/` | Higher-order augmentation (Supplement S5.5) |
+| `simulations/` | Independent endpoints (Main Figure 1) |
+| `simulations_2/` | Correlated endpoints (Figure S1, Supplement S5.4) |
+| `simulations_k/` | Higher-order augmentation (Main Figure 2; Supplement S5.5) |
+| `real_data/` | Acute leukaemia analysis (Main Figure 3; Supplement S6) |
 
 Each simulation folder contains scripts, saved results (`results.rds`),
 summary tables and the figure `power_fwer.pdf`.
@@ -28,16 +29,18 @@ Run the commands below from the repository root, keeping the folder structure in
 
 ## Regenerate figures
 
-Use the supplied results without rerunning simulations:
+Use the supplied results without rerunning simulations or the real-data analysis:
 
 ```r
 source("simulations/02_plot.R")
 source("simulations_2/02_plot.R")
 source("simulations_k/02_plot.R")
+source("real_data/02_plot.R")
 ```
 
-These commands update the figures, timing summaries and paired power comparisons
-in each folder. No C++ compilation is needed.
+The simulation scripts update the figures, timing summaries and paired power comparisons.
+The leukaemia script regenerates `adjusted_pvalues.pdf` from `adjusted_pvalues.csv`.
+No C++ compilation is needed.
 
 ## Rerun simulations
 
@@ -57,6 +60,8 @@ Sys.unsetenv(c("SIM_N_CORES", "SIM_RESUME"))
 ```
 
 Then run the plotting commands above. Full simulations can take substantial time.
+The leukaemia analysis is in `real_data/01_analyse.R` and uses
+one million sampled permutations.
 
 ## Use the testing function
 
@@ -84,5 +89,3 @@ Use `n_perm` to set the number of sampled permutations (default: 9999), or
 With `alpha = NULL` (default), results include `p_adjusted`.
 Supplying `alpha` returns `reject`, `p_adjusted_lower` and
 `p_adjusted_upper` instead. Decision shortcuts are available for TEA and KEA.
-
-
